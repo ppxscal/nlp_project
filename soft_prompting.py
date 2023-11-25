@@ -1,67 +1,40 @@
 from datasets import load_dataset
-from peft import PromptTuningConfig, TaskType, get_peft_model
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
-from transformers import Trainer, TrainingArguments
+from transformers import (AutoTokenizer, AutoModelForMaskedLM, TrainingArguments,
+                          Trainer, DataCollatorForLanguageModeling)
 
-# List of dataset splits
-splits = ["cos_e_v1.11_aligned_with_common_sense", 
-        #   "cos_e_v1.11_description_question_option_id", 
-        #   "cos_e_v1.11_description_question_option_text",
-        #   "cos_e_v1.11_explain_why_human", 
-        #   "cos_e_v1.11_generate_explanation_given_text", 
-        #   "cos_e_v1.11_i_think", 
-        #   "cos_e_v1.11_question_description_option_id", 
-        #   "cos_e_v1.11_question_description_option_text", 
-        #   "cos_e_v1.11_question_option_description_id", 
-        #   "cos_e_v1.11_question_option_description_text", 
-        #   "cos_e_v1.11_rationale"
-          ]
+# Load the dataset
+dataset = load_dataset("bigscience/P3", "cos_e_v1.11_aligned_with_common_sense")
 
+# Initialize the tokenizer and the model
+tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+model = AutoModelForMaskedLM.from_pretrained("distilbert-base-uncased")
 
-model = GPT2LMHeadModel.from_pretrained("gpt2")
-tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+# Tokenize the dataset
+def tokenize_function(examples):
+    return tokenizer(examples["inputs_pretokenized"], truncation=True, padding="max_length")
 
-prompt_tuning_config = PromptTuningConfig(
-    task_type=TaskType.SEQ_CLS,
-    num_virtual_tokens=10
-)
+tokenized_dataset = dataset.map(tokenize_function, batched=True)
 
-peft_model = get_peft_model(model, prompt_tuning_config)
+# Create a data collator for masked language modeling
+data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=0.15)
 
-# split_data = {}
-# for split in splits:
-#     split_data[split] = load_dataset("bigscience/P3", split)
-    # print(f"First few examples from {split}:")
-    # print(split_data[split].keys())
-    # print(split_data[split]['train'][:5])
-    # print(split_data[split]['validation'][:5])
-
-# data = split_data['cos_e_v1.11_aligned_with_common_sense']
-
-
+# Define the training arguments
 training_args = TrainingArguments(
     output_dir="./results",
     num_train_epochs=3,
-    per_device_train_batch_size=8,
-    per_device_eval_batch_size=8,
-    evaluation_strategy="epoch",
-    logging_dir="./logs",
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=64,
+    learning_rate=2e-5,
+    weight_decay=0.01,
 )
 
-data = load_dataset("bigscience/P3", 'cos_e_v1.11_aligned_with_common_sense')
-
-# Check if the dataset is loaded correctly
-if 'train' not in data or len(data['train']) == 0:
-    raise ValueError("Training dataset is empty or not loaded correctly")
-
+# Initialize the trainer
 trainer = Trainer(
-    model=peft_model,
+    model=model,
     args=training_args,
-    train_dataset=data['train'],
-    eval_dataset=data['train'],
+    train_dataset=tokenized_dataset["train"],
+    data_collator=data_collator,
 )
 
+# Train the model
 trainer.train()
-
-trainer.evaluate()
-
